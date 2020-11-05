@@ -2,18 +2,21 @@
 
 class WriteOffer
 {
-	protected $param = array;
+	protected $param = array();
 	protected $log;
+	public $mapSections = array();
 
 	public function __construct(array $param) {
+		$this->param = $param;
 		$this->param['TYPE_PRICE'] = 1;
+		$this->mapSections = $this->getMapSections();
 	}
 
-	public function setParam($param) {
-		$this->param = array_merge($this->param,$param);
+	public function setParam($key,$value) {
+		$this->param[$key] = $value;
 	}
 
-	protected function createOffer($offerProp,$offerFields,$offerPrice,$offerQ = 1) {
+	public function createOffer($offerProp,$offerFields,$offerPrice,$offerQ = 1) {
 		$result = array();
 
 		$params = array(
@@ -31,31 +34,30 @@ class WriteOffer
 		  
 		  $fields = array (
 		    "IBLOCK_ID"         => $this->param['IBLOCK_ID'],
-		    "NAME"              => $data[1],
 		    "ACTIVE"            => "Y",
-		    "CODE"              => CUtil::translit($data[1], "ru", $params),
+		    "CODE"              => CUtil::translit($offerFields['NAME'], "ru", $params),
 		    "PROPERTY_VALUES"   => $prop,
 		  );
 
-		  $fields = merge_array($fields,$offerFields);
+		  $fields = array_merge($fields,$offerFields);
 
 		  if($id = $el->Add($fields)) {
 
 		  //Записываем свойство типа справочник
 		  //CIBlockElement::SetPropertyValuesEx($ID, CATALOG_IBLOCK, array('BRANDS_REF' => $data[4]));
 
-		    //Создаем товар
-		    $productID = CCatalogProduct::add(array("ID" => $id, "QUANTITY" => $offerQ));
+		  //Создаем товар
+		  $productID = CCatalogProduct::add(array("ID" => $id, "QUANTITY" => $offerQ));
 
 		    //Добавляем цену
 		    $priceFields = Array(
 		      "CURRENCY"         => "RUB", // валюта
-		      "PRICE"            => intval($data[4]), // значение цены
+		      "PRICE"            => intval($offerPrice), // значение цены
 		      "CATALOG_GROUP_ID" => $this->param['TYPE_PRICE'], // ID типа цены
 		      "PRODUCT_ID"       => $id, // ID товара
 		    );
 
-		    CPrice::Add($arFields);
+		    CPrice::Add($priceFields);
 
 		    //Количество по складам
 		    /*$arFields = Array(
@@ -106,24 +108,35 @@ class WriteOffer
 	}
 
 
-	protected function getMapSections() {
+	public function getMapSections() {
 		$result = array();
 		$rsSection = \Bitrix\Iblock\SectionTable::getList(array(
 		    	'filter' => array(
-	        		'IBLOCK_ID' => $this->arParams['IBLOCK_ID'],
+	        		'IBLOCK_ID' => $this->param['IBLOCK_ID'],
 	    		),
 				'order' => array('LEFT_MARGIN' => 'ASC'),
-	    		'select' =>  array('ID','NAME', 'DEPTH_LEVEL'),
+	    		'select' =>  array('ID','NAME','DEPTH_LEVEL'),
 	    		'cache' => ['ttl' => 3600],
 		));
 		while ($arSection = $rsSection->fetch()) {
-		    $result[$arSection['ID']] = $arSection;
+		    $result[$arSection['NAME']] = $arSection;
 		}
 
 		return $result;
 	}
 
-	protected function toUtf8($value) {
+	public function getMapOffer() {
+		$dbItems = \Bitrix\Iblock\ElementTable::getList(array(
+			'order' => array('SORT' => 'ASC'), // сортировка
+			'select' => array('ID'),
+			'filter' => array('IBLOCK_ID' => $this->param['IBLOCK_ID']), 
+			)
+		);
+		
+		return $dbItems->fetchAll();
+	}
+
+	public function toUtf8($value) {
 		if (is_array($value)) {
 	    	$result = array();
 			foreach ($value as $item) {
@@ -136,12 +149,24 @@ class WriteOffer
 	   return $result ;
 	}
 
-	protected function createSection($name, $parent = false) {
+	public function createSection($name, $parent = false) {
+		$result = array();
+
+		$params = array(
+		      "max_len" => "100", 
+		      "change_case" => "L", 
+		      "replace_space" => "_", 
+		      "replace_other" => "_", 
+		      "delete_repeat_replace" => "true", 
+		      "use_google" => "false", 
+		   );
+
 		$section = new CIBlockSection;
 	    $arFields = Array(
 	        "ACTIVE" => "Y", 
 	        "IBLOCK_ID" => $this->param['IBLOCK_ID'],
 	        "NAME" => $name,
+	        "CODE" => CUtil::translit($name, "ru", $params),
 	    );
 
 	    if ($parent) {
@@ -149,10 +174,46 @@ class WriteOffer
 	    }
 
 	    if ($id_section = $section->Add($arFields)) {
-	    	return $id_section;
+	    	$result = array (
+	    		'status' => 'success',
+	    		'id' => $id_section
+	    	);
 	    } else {
-	        return $section->LAST_ERROR;
+	    	$result = array (
+	    		'status' => 'error',
+	    		'error' => $section->LAST_ERROR,
+	    	);
 	    }
+	    return $result;
+	}
+
+	public function buildMapSections($arMap) {
+		foreach($arMap as $section) {
+			if(!$this->issetSection($section['name'])) {
+				if (!empty($section['parentId'])) {
+					$parent = $this->mapSections[$arMap[$section['parentId']]['name']]['ID'];
+				} else {
+					$parent = false;
+				}
+				$res = $this->createSection($section['name'], $parent);
+				
+				//Добавлям раздел в map
+				if($res['status'] == 'success') {
+					$this->mapSections[$section['name']] = array('ID' => $res['id']);
+				}
+			}
+		}
+
+		//Перезаливаем map разделов
+		$this->mapSections = $this->getMapSections();
+	}
+
+	public function issetSection($sectionName) {
+		return array_key_exists($sectionName, $this->mapSections);
+	}
+
+	private function trace($message) {
+		echo $message.'<br />';
 	}
 }
 
