@@ -143,13 +143,13 @@ class WriteOffer
 		if (is_array($value)) {
 	    	$result = array();
 			foreach ($value as $item) {
-				$new_arr[] = iconv("Windows-1251", "UTF-8", trim($item));
+				$result[] = iconv("Windows-1251", "UTF-8", trim($item));
 			}
 	   } else {
 	   		$result = iconv("Windows-1251", "UTF-8", trim($value));
 	   }
 
-	   return $result ;
+	   return $result;
 	}
 
 	public function createSection($name, $parent = false) {
